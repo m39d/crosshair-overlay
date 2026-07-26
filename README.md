@@ -1,6 +1,6 @@
 # crosshair-overlay
 A crosshair overlay for Wayland that actually works properly: it's a real
-layer-shell surface (not some always-on-top window hack), it's click-through,
+layer-shell surface, it's click-through,
 it never steals keyboard focus, and it comes with a GUI so you don't have to
 hand-edit a config file to change the color or size.
 Built and tested on KDE Plasma (Wayland) and Hyprland. Should work on any
