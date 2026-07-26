@@ -7,3 +7,4 @@ Icon=crosshair-overlay
 Terminal=false
 Categories=Game;Utility;Settings;
 StartupNotify=true
+StartupWMClass=io.github.crosshair-overlay.settings
