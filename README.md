@@ -41,14 +41,25 @@ and it's been tested rather than just written and forgotten.
 ### Arch Linux (AUR)
 ```bash
 yay -S crosshair-overlay
-# or paru, or manually:
+```
+### Arch Linux (Manually)
+```bash
 git clone https://aur.archlinux.org/crosshair-overlay.git
 cd crosshair-overlay
 makepkg -si
 ```
 ### Anything else
-There's no distro-agnostic package yet (an AppImage may show up later).
-For now, clone the repo and see [Manual setup](#manual-setup) below.
+There's no distro-agnostic package yet (an AppImage may show up later). You'll
+need Python 3.11+, GTK4, `gtk4-layer-shell`, PyGObject, and pycairo installed.
+Then:
+```bash
+git clone https://github.com/m39d/crosshair-overlay.git
+cd crosshair-overlay
+mkdir -p ~/.local/bin
+cp *.py ~/.local/bin/
+chmod +x ~/.local/bin/crosshaird.py ~/.local/bin/crosshair-gui.py ~/.local/bin/crosshairctl.py
+```
+Make sure `~/.local/bin` is on your `PATH`, then run `crosshair-gui.py`.
 ## Using it
 Launch the settings GUI:
 ```bash
@@ -93,16 +104,5 @@ offset_y = 0
 [daemon]
 start_visible = true
 ```
-## Manual setup (no AUR)
-You'll need Python 3.11+, GTK4, `gtk4-layer-shell`, PyGObject, and pycairo
-installed. Then:
-```bash
-git clone https://github.com/m39d/crosshair-overlay.git
-cd crosshair-overlay
-mkdir -p ~/.local/bin
-cp *.py ~/.local/bin/
-chmod +x ~/.local/bin/crosshaird.py ~/.local/bin/crosshair-gui.py ~/.local/bin/crosshairctl.py
-```
-Make sure `~/.local/bin` is on your `PATH`, then run `crosshair-gui.py`.
 ## License
 MIT. See [LICENSE](LICENSE).
