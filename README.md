@@ -13,7 +13,7 @@ you editing a TOML file by hand every time you want to nudge the size or
 change the color. This one has a proper settings window with a live preview,
 and it's been tested rather than just written and forgotten.
 ## Features
-- Cross, dot, or circle shapes — or use your own custom image instead
+- Cross, dot, or circle shapes, or use your own custom image instead
 - Live-adjustable size, thickness, center gap, color, and opacity
 - Position offset and per-output targeting (pick which monitor it shows up on)
 - Settings GUI with a live preview
