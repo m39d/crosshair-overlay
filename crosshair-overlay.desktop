@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Crosshair Overlay
+Comment=Configure a click-through Wayland crosshair overlay for gaming
+Exec=crosshair-gui
+Icon=crosshair-overlay
+Terminal=false
+Categories=Game;Utility;Settings;
+StartupNotify=true
