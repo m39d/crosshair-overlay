@@ -1,6 +1,6 @@
 # Maintainer: m39d
 pkgname=crosshair-overlay
-pkgver=0.1.0
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="Native Wayland crosshair overlay for gaming, with a graphical settings tool"
 arch=('any')
