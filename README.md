@@ -6,7 +6,13 @@ hand-edit a config file to change the color or size.
 Built and tested on KDE Plasma (Wayland) and Hyprland. Should work on any
 compositor that supports `wlr-layer-shell`.
 
-![screenshot of the settings GUI](crosshair-overlay.jpg)
+<p>
+  <img src="crosshair-overlay.jpg" alt="Settings GUI" width="400">
+</p>
+<p>
+  <img src="crosshair-ingame.jpg" alt="Crosshair in-game" width="400">
+</p>
+
 ## Why this exists
 Most of the crosshair overlays floating around for Linux are either
 X11 hacks that don't really work right under Wayland, or they work but leave
