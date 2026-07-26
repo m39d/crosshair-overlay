@@ -5,6 +5,7 @@ it never steals keyboard focus, and it comes with a GUI so you don't have to
 hand-edit a config file to change the color or size.
 Built and tested on KDE Plasma (Wayland) and Hyprland. Should work on any
 compositor that supports `wlr-layer-shell`.
+
 ![screenshot of the settings GUI](crosshair-overlay.jpg)
 ## Why this exists
 Most of the crosshair overlays floating around for Linux are either
