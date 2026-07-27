@@ -7,10 +7,10 @@ Built and tested on KDE Plasma (Wayland) and Hyprland. Should work on any
 compositor that supports `wlr-layer-shell`.
 
 <p>
-  <img src="crosshair-overlay.jpg" alt="Settings GUI" width="400">
+  <img src="crosshair-overlay.png" alt="Settings GUI" width="400">
 </p>
 <p>
-  <img src="crosshair-ingame.jpg" alt="Crosshair in-game" width="400">
+  <img src="crosshair-ingame.png" alt="Crosshair in-game" width="400">
 </p>
 
 ## Why this exists

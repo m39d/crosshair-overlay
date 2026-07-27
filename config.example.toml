@@ -3,9 +3,9 @@
 [crosshair]
 shape = "cross"      # "cross" | "dot" | "circle" — ignored if `image` is set below
 size = 24             # bounding box in px (also the scaled size of a custom image)
-thickness = 2         # line/stroke width in px (vector shapes only)
+thickness = 3         # line/stroke width in px (vector shapes only)
 gap = 4               # center gap for "cross" shape, in px (vector shapes only)
-color = "#00FF00"     # hex RGB (vector shapes only; images use their own colors)
+color = "#9a00ff"     # hex RGB (vector shapes only; images use their own colors)
 opacity = 0.85        # 0.0 (invisible) - 1.0 (fully opaque); applies to shapes AND images
 output = ""           # output/connector name, e.g. "DP-1" (blank = default output;
                        # list names with `kscreen-doctor -o` on KDE Plasma, or
