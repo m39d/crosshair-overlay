@@ -131,6 +131,14 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         finally:
             self._loading = False
 
+        # _get_monitor_geometry()'s "automatic" fallback asks which
+        # monitor *this window* is on, which GTK can't answer until
+        # we're realized -- at __init__ time (above) it fell back to
+        # monitor 0. Once realize fires, recompute the offset sliders
+        # against the real answer so a saved non-zero offset displays
+        # correctly instead of whatever monitor-0's resolution implied.
+        self.connect("realize", self._on_realize_refresh_offsets)
+
         self._refresh_status()
         if not self.socket_path.exists():
             # Quality-of-life: start the overlay automatically when you
@@ -280,15 +288,6 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         self.output_dropdown = Gtk.DropDown(model=self._build_output_model())
         self._connect_signal(self.output_dropdown, "notify::selected", self._on_output_changed)
         box.append(self._labeled_row("Output", self.output_dropdown))
-
-        note = Gtk.Label(
-            label="\"Automatic\" follows whatever the compositor picks "
-            "(usually your primary/current monitor).",
-            wrap=True,
-        )
-        note.add_css_class("dim-label")
-        note.set_halign(Gtk.Align.START)
-        box.append(note)
         return box
 
     def _build_output_model(self):
@@ -485,12 +484,28 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
 
         if target is None:
             # "Automatic" (or a named output that isn't currently
-            # connected): there's no reliable way from here to ask the
-            # compositor which monitor is "current/primary", so we fall
-            # back to the first one GTK reports. Good enough for the
-            # centering math in the common case; if your primary output
-            # isn't first in this list, pin a specific output above to
-            # get exact centering on it.
+            # connected): crosshaird.py's own automatic case never
+            # calls LayerShell.set_monitor() at all (see _bind_output),
+            # so the surface just lands on whatever the compositor
+            # treats as its default/focused output. GTK4 has no public
+            # "primary output" query on Wayland, so we can't ask that
+            # question directly -- but this settings window is itself
+            # an ordinary toplevel, and the compositor puts *it*
+            # somewhere too, almost always the same
+            # currently-focused/default output the overlay will end up
+            # on. So: ask which monitor our own surface is on and use
+            # that as the stand-in for "automatic".
+            surface = self.get_surface() if hasattr(self, "get_surface") else None
+            if surface is not None:
+                target = display.get_monitor_at_surface(surface)
+
+        if target is None:
+            # Window not realized yet (e.g. called before the first
+            # "realize" signal), or get_monitor_at_surface came back
+            # empty -- fall back to the first monitor GTK reports.
+            # Good enough to avoid crashing; the geometry gets
+            # recomputed (and corrected) as soon as the window is
+            # shown, via the "realize"/"map" handlers.
             target = monitors.get_item(0)
 
         rect = target.get_geometry()
@@ -559,6 +574,19 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         mon_w, mon_h = geo
         self.cfg["crosshair"]["offset_x"] = int(round((mon_w - size) / 2.0 + self._rel_offset_x))
         self.cfg["crosshair"]["offset_y"] = int(round((mon_h - size) / 2.0 + self._rel_offset_y))
+
+    def _on_realize_refresh_offsets(self, *_args):
+        """Re-derive the relative-offset sliders now that this window's
+        own monitor (our stand-in for "automatic") is knowable.
+
+        Purely a display refresh: it doesn't touch self.cfg, so it
+        can't overwrite a good saved config even if something about
+        this guess is still off.
+        """
+        rel_x, rel_y = self._relative_offsets_from_raw()
+        self._rel_offset_x, self._rel_offset_y = rel_x, rel_y
+        self._set_widget_silently(self.offset_x_adj, lambda: self.offset_x_adj.set_value(rel_x))
+        self._set_widget_silently(self.offset_y_adj, lambda: self.offset_y_adj.set_value(rel_y))
 
     # -- change handlers --------------------------------------------------
 

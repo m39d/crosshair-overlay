@@ -79,7 +79,7 @@ crosshairctl hide
 crosshairctl reload    # re-read config.toml and apply changes
 crosshairctl quit
 ```
-**KDE Plasma:** System Settings → Shortcuts → Custom Shortcuts → add a new
+**KDE Plasma:** System Settings -> Shortcuts -> Custom Shortcuts -> add a new
 one that runs `crosshairctl toggle`.
 **Other compositors:** bind it however you'd normally bind a command to a
 key (e.g. in your Hyprland config: `bind = $mainMod, X, exec, crosshairctl toggle`).
