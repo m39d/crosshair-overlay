@@ -20,7 +20,7 @@ depends=(
 # standard naming for tag archives), which is why every path in
 # package() below is prefixed with "$pkgname-$pkgver/".
 source=("$pkgname-$pkgver.tar.gz::https://github.com/m39d/crosshair-overlay/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('f9a5645384743c18f84705b1d45da5cdb2b8f5c21c4d9e2f4bc0d809528f5fb2')
+sha256sums=('aa63979570d914543341edc84049a7880e174c47bf82d6bf10325f400be2fe5d')
 
 package() {
     local libdir="$pkgdir/usr/lib/crosshair-overlay"
