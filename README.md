@@ -28,15 +28,6 @@ and it's been tested rather than just written and forgotten.
   custom images right into it, so it's one file to share
 - Controlled via a tiny CLI (`crosshairctl toggle/show/hide/reload/quit`)
   so you can bind it to a keyboard shortcut in your desktop environment
-## Known issues
-- The settings GUI opens at a fixed size and isn't currently built to shrink
-  below that. On a monitor with less than 1080p of vertical resolution, or in
-  any environment where you can't easily drag the window around, part of the
-  window can end up off-screen with no way to reach the bottom buttons. If you
-  hit this, try a lower UI scale factor, or move the window with a keyboard
-  shortcut if your desktop supports one (e.g. KDE's default Meta+drag-anywhere-in-window).
-  You can also just use crosshairctl by itself.
-  
 ## Installing
 ### Arch Linux (AUR)
 ```bash
@@ -56,14 +47,15 @@ Then:
 git clone https://github.com/m39d/crosshair-overlay.git
 cd crosshair-overlay
 mkdir -p ~/.local/bin
-cp *.py ~/.local/bin/
-chmod +x ~/.local/bin/crosshaird.py ~/.local/bin/crosshair-gui.py ~/.local/bin/crosshairctl.py
+cp *.py crosshair-overlay ~/.local/bin/
+chmod +x ~/.local/bin/crosshaird.py ~/.local/bin/crosshair-gui.py ~/.local/bin/crosshairctl.py ~/.local/bin/crosshair-overlay
 ```
-Make sure `~/.local/bin` is on your `PATH`, then run `crosshair-gui.py`.
+Make sure `~/.local/bin` is on your `PATH`, then run `crosshair-overlay`
+(or `crosshair-gui.py` directly, if you prefer).
 ## Using it
 Launch the settings GUI:
 ```bash
-crosshair-gui
+crosshair-overlay
 ```
 Opening it will automatically start the overlay if it isn't running
 already. Change anything in the window and it updates live. There's an
@@ -103,6 +95,15 @@ offset_y = 0
 # image = "~/.config/crosshair-overlay/crosshair.png"
 [daemon]
 start_visible = true
+
+[import]
+# Bookkeeping used only when resolving an imported config with a
+# different monitor_res than your screen. Safe to leave blank.
+monitor_res = ""       # e.g. "2560x1440", set automatically on export
+keep_rel_offset = ""   # If monitor_res differs from the screen's resolution,
+# "scaled" will convert the relative offset from center in your screen to a
+# value proportional to what it was on the old resolution, while "raw" will
+# keep the exact pixel values the same.
 ```
 ## License
 MIT. See [LICENSE](LICENSE).

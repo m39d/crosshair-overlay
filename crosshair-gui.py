@@ -57,8 +57,10 @@ from crosshair_common import (  # noqa: E402
     decode_image_bundle,
     dump_toml,
     encode_image_bundle,
+    format_monitor_res,
     load_config,
     load_pixbuf,
+    parse_monitor_res,
     render_crosshair,
     save_config,
     send_control_command,
@@ -74,7 +76,35 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         super().__init__(application=app, title="Crosshair Overlay Settings")
         self.config_path = config_path
         self.socket_path = socket_path
-        self.set_default_size(400, 680)
+        # Matches Icon=crosshair-overlay in crosshair-overlay.desktop
+        # (whose StartupWMClass also matches this app's application-id
+        # below, so KDE can tie a running window back to that entry).
+        # This used to be hardcoded to "preferences-system" -- a generic
+        # icon-theme fallback from before a real .desktop file/icon
+        # existed, back when an icon-less toplevel made KDE/Wayland show
+        # the Wayland project's own logo instead. Now that a proper icon
+        # exists, naming it directly here shows the real crosshair icon
+        # instead of that generic placeholder.
+        #
+        # For KDE to actually resolve the name "crosshair-overlay" to
+        # crosshair-overlay.svg, the file needs to be installed under an
+        # icon theme directory, e.g.:
+        #   ~/.local/share/icons/hicolor/scalable/apps/crosshair-overlay.svg
+        # (or the system-wide /usr/share/icons/... equivalent if this is
+        # packaged) -- just having the .svg sitting next to the scripts
+        # is not enough for icon-name lookup to find it.
+        self.set_icon_name("crosshair-overlay")
+        # This was previously (400, 680), which was never the real
+        # opening size -- gtk_window_set_default_size() is only a
+        # request, and GTK silently ignores it whenever the content's
+        # actual minimum size is larger, falling back to that instead.
+        # This window's content (all the control rows, unwrapped
+        # section headers, etc.) has a minimum footprint closer to
+        # 512x850, which is what was actually showing up regardless of
+        # what was requested here. Matching that here so the code
+        # states the size it really opens at, rather than one that was
+        # always being overridden.
+        self.set_default_size(512, 850)
 
         self._loading = True         # suppress apply-on-change while we set initial widget state
         self._apply_source_id = None
@@ -113,7 +143,33 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         root.set_margin_bottom(12)
         root.set_margin_start(12)
         root.set_margin_end(12)
-        self.set_child(root)
+
+        # Previously `root` was set directly as the window's child at a
+        # fixed 400x680 default size. On a short monitor (< ~1080p
+        # vertical, or a scaled-up UI) or a compositor where the window
+        # can't easily be dragged, the content simply ran off the bottom
+        # of the screen with no way to reach the Import/Export/Start
+        # buttons -- the README's "Known issues" workaround (lower UI
+        # scale, or move the window with a keyboard shortcut) was a
+        # workaround for exactly this. A ScrolledWindow lets GTK shrink
+        # the actual window below the content's natural height and
+        # scroll to reach whatever doesn't fit, instead of requiring the
+        # full content height to be visible at once.
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        # Without this, GTK sizes the ScrolledWindow (and so the window)
+        # to fit its child's full natural size before ever considering
+        # shrinking it -- the same clipping problem all over again, just
+        # one layer up. This is what actually allows "smaller than the
+        # content" to be a valid window size.
+        scroller.set_propagate_natural_height(False)
+        scroller.set_vexpand(True)
+        scroller.set_child(root)
+        self.set_child(scroller)
+        # Kept so _disable_scroll()'s controllers can drive the window's
+        # own scrolling by hand -- see the comment there for why this is
+        # necessary rather than just letting the scroll event bubble.
+        self.scroller = scroller
 
         root.append(self._build_preview())
         root.append(self._build_shape_picker())
@@ -212,6 +268,45 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         row.append(widget)
         return row
 
+    def _disable_scroll(self, widget):
+        """Stop the mouse scroll wheel from changing `widget`'s value,
+        while still letting the settings window scroll underneath it.
+
+        GtkScale and GtkSpinButton both treat a scroll event over them
+        as an increment/decrement by default. That's a mild convenience
+        for a lone slider, but a bad surprise here: nudging a value by
+        one scroll click while just trying to move the mouse past it
+        is exactly the kind of "why did this change" bug reports come
+        from. A capture-phase scroll controller intercepts the event
+        before the widget's own built-in scroll handling ever runs.
+
+        Simply returning True from that controller stops the value from
+        changing, but it also marks the event fully handled, so it never
+        reaches the outer ScrolledWindow's own bubble-phase scroll
+        controller further up the widget tree -- the window just does
+        nothing instead of scrolling. There's no GTK4 flag to say
+        "handled by me, but still bubble it up", so _on_control_scroll
+        below drives self.scroller's vertical adjustment by hand to get
+        the same effect: the control's value stays put, and the window
+        still scrolls.
+        """
+        controller = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.BOTH_AXES)
+        controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        controller.connect("scroll", self._on_control_scroll)
+        widget.add_controller(controller)
+
+    def _on_control_scroll(self, _controller, _dx, dy):
+        """Manually scroll the settings window in place of the slider/spin
+        button under the cursor eating the event. See _disable_scroll for
+        why this can't just be left to normal event propagation."""
+        vadj = self.scroller.get_vadjustment()
+        if vadj is not None:
+            step = vadj.get_step_increment() or 20
+            new_value = vadj.get_value() + dy * step
+            upper = max(vadj.get_lower(), vadj.get_upper() - vadj.get_page_size())
+            vadj.set_value(max(vadj.get_lower(), min(new_value, upper)))
+        return True
+
     def _build_adjustable_row(self, label_text, lower, upper, step, digits=0, page_increment=None, subtitle=None):
         """A slider + a type-able number box, sharing one Gtk.Adjustment.
 
@@ -235,9 +330,11 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         scale.set_draw_value(False)
         scale.set_digits(digits)
         scale.set_hexpand(True)
+        self._disable_scroll(scale)
 
         spin = Gtk.SpinButton(adjustment=adjustment, digits=digits, climb_rate=step)
         spin.set_width_chars(6)
+        self._disable_scroll(spin)
 
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         if subtitle:
@@ -385,6 +482,13 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         # the centering formula depends on which monitor's resolution
         # we're measuring against.
         self._select_output_from_cfg()
+
+        # No-ops unless cfg["crosshair"] has rel_offset_x/rel_offset_y --
+        # i.e. an Import Config… (or a hand-pasted [crosshair]/[import]
+        # section) that hasn't been resolved into offset_x/offset_y for
+        # this machine yet. See its docstring for the raw-vs-scaled
+        # resolution-mismatch prompt this can trigger.
+        self._resolve_imported_offsets()
 
         rel_x, rel_y = self._relative_offsets_from_raw()
         self._rel_offset_x, self._rel_offset_y = rel_x, rel_y
@@ -574,6 +678,184 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         mon_w, mon_h = geo
         self.cfg["crosshair"]["offset_x"] = int(round((mon_w - size) / 2.0 + self._rel_offset_x))
         self.cfg["crosshair"]["offset_y"] = int(round((mon_h - size) / 2.0 + self._rel_offset_y))
+
+    # -- resolving a portable (rel_offset_x/y) import into raw offsets --
+
+    def _resolve_imported_offsets(self):
+        """Consume cfg["crosshair"]'s rel_offset_x/rel_offset_y (present
+        only right after an Import Config…, or a profile hand-pasted
+        straight into config.toml) and turn them into this machine's raw
+        offset_x/offset_y, same as the normal saved format.
+
+        If the config also recorded a different [import] monitor_res
+        than what's currently selected, and hasn't already recorded a
+        keep_rel_offset choice, this prompts once (async -- GTK4 has no
+        blocking dialog) asking whether to keep the exact pixel offset
+        or scale it to the new resolution. Either way, an offset is
+        applied immediately using the best answer available so far (the
+        unscaled "raw" reading, corrected afterwards if the prompt comes
+        back "scaled") -- nothing is left half-applied while the prompt
+        is pending.
+
+        Caveat shared with _get_monitor_geometry()'s "Automatic" output
+        case: at first-launch time (before this window's "realize"
+        fires), the "current resolution" this compares against may
+        still be the monitor-0 fallback rather than this window's real
+        monitor -- same limitation _on_realize_refresh_offsets already
+        works around for the *display*, just not re-run here.
+        """
+        c = self.cfg["crosshair"]
+        if "rel_offset_x" not in c and "rel_offset_y" not in c:
+            return
+
+        rel_x = float(c.pop("rel_offset_x", 0))
+        rel_y = float(c.pop("rel_offset_y", 0))
+
+        imp = self.cfg.setdefault("import", dict(DEFAULT_CONFIG["import"]))
+        recorded_res = parse_monitor_res(imp.get("monitor_res", ""))
+        current_res = self._get_monitor_geometry()
+        keep_mode = imp.get("keep_rel_offset", "")
+
+        needs_prompt = (
+            recorded_res is not None
+            and current_res is not None
+            and recorded_res != current_res
+            and keep_mode not in ("raw", "scaled")
+        )
+
+        if keep_mode == "scaled" and recorded_res and current_res:
+            rel_x, rel_y = self._scale_rel_offsets(rel_x, rel_y, recorded_res, current_res)
+
+        self._rel_offset_x, self._rel_offset_y = rel_x, rel_y
+        self._apply_relative_offsets()
+
+        # Resolved into offset_x/offset_y above -- nothing left for a
+        # future load to resolve, so there's nothing left worth
+        # remembering here either.
+        self.cfg["import"]["monitor_res"] = ""
+        self.cfg["import"]["keep_rel_offset"] = ""
+
+        # Persist now rather than waiting for some unrelated edit to
+        # trigger a save -- otherwise a hand-pasted rel_offset_x/y that
+        # doesn't need the prompt below (matching/missing monitor_res)
+        # would silently re-run this same resolution on every launch
+        # until something else happens to save the file.
+        self._apply_now()
+
+        if needs_prompt:
+            self._prompt_offset_scaling(rel_x, rel_y, recorded_res, current_res)
+
+    @staticmethod
+    def _scale_rel_offsets(rel_x, rel_y, recorded_res, current_res):
+        rw, rh = recorded_res
+        cw, ch = current_res
+        return rel_x * (cw / rw), rel_y * (ch / rh)
+
+    def _prompt_offset_scaling(self, rel_x, rel_y, recorded_res, current_res):
+        """Ask whether to keep the imported offset's exact pixel value or
+        scale it proportionally to this machine's resolution.
+
+        A plain Gtk.Window built by hand rather than Gtk.MessageDialog:
+        MessageDialog always puts its buttons in an action area glued to
+        the very bottom, with no supported way to put anything after
+        them -- but the config-file note here is meant to sit below the
+        buttons, not above them alongside the question, so the fixed
+        MessageDialog layout doesn't fit.
+
+        `rel_x`/`rel_y` are the *unscaled* relative offsets (already
+        applied as a starting point by the caller); this only decides
+        whether to leave them as-is or replace them with a scaled
+        version once the user answers.
+        """
+        window = Gtk.Window(transient_for=self, modal=True, title="Different Monitor Resolution")
+        window.set_resizable(False)
+        # Same fallback-icon fix as the main settings window; dialog-question
+        # also happens to be a semantically fitting stock icon for this.
+        window.set_icon_name("dialog-question")
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        box.set_margin_top(18)
+        box.set_margin_bottom(18)
+        box.set_margin_start(18)
+        box.set_margin_end(18)
+
+        recorded_str = format_monitor_res(*recorded_res)
+        current_str = format_monitor_res(*current_res)
+        question = Gtk.Label(
+            label=(
+                f"The current monitor resolution ({current_str}) differs from "
+                f"the monitor resolution ({recorded_str}) this config file was "
+                "created for.\nWould you rather:"
+            )
+        )
+        question.set_wrap(True)
+        question.set_max_width_chars(46)
+        question.set_xalign(0)
+        box.append(question)
+
+        button_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10, homogeneous=True)
+
+        keep_btn = Gtk.Button()
+        keep_label = Gtk.Label(label="Keep the raw offset")
+        keep_label.set_wrap(True)
+        keep_label.set_justify(Gtk.Justification.CENTER)
+        keep_btn.set_child(keep_label)
+
+        scale_btn = Gtk.Button()
+        scale_label = Gtk.Label(label="Try to scale the offset to the current resolution")
+        scale_label.set_wrap(True)
+        scale_label.set_justify(Gtk.Justification.CENTER)
+        scale_btn.set_child(scale_label)
+
+        button_row.append(keep_btn)
+        button_row.append(scale_btn)
+        box.append(button_row)
+
+        note = Gtk.Label()
+        note.set_markup(
+            "<small><i>You can change 'keep_rel_offset raw/scaled' in the "
+            "config file to skip this message</i></small>"
+        )
+        note.add_css_class("dim-label")
+        note.set_wrap(True)
+        note.set_max_width_chars(46)
+        note.set_xalign(0)
+        box.append(note)
+
+        window.set_child(box)
+
+        def finish(scaled):
+            window.destroy()
+            self._on_offset_scaling_response(scaled, rel_x, rel_y, recorded_res, current_res)
+
+        keep_btn.connect("clicked", lambda *_a: finish(False))
+        scale_btn.connect("clicked", lambda *_a: finish(True))
+        # Closing the window (titlebar X, Escape, etc.) without picking
+        # either button leaves the interim "raw" apply from
+        # _resolve_imported_offsets in place -- same as explicitly
+        # choosing "Keep the raw offset".
+        window.connect("close-request", lambda *_a: finish(False) or True)
+
+        self._active_dialog = window
+        window.present()
+
+    def _on_offset_scaling_response(self, scaled: bool, rel_x, rel_y, recorded_res, current_res):
+        self._active_dialog = None
+
+        if scaled:
+            rel_x, rel_y = self._scale_rel_offsets(rel_x, rel_y, recorded_res, current_res)
+
+        self._rel_offset_x, self._rel_offset_y = rel_x, rel_y
+        self._apply_relative_offsets()
+        self._set_widget_silently(self.offset_x_adj, lambda: self.offset_x_adj.set_value(rel_x))
+        self._set_widget_silently(self.offset_y_adj, lambda: self.offset_y_adj.set_value(rel_y))
+        self._refresh_preview()
+        # Persist right away -- otherwise closing the window immediately
+        # after answering, without touching anything else, would lose
+        # the corrected offset (the interim "raw" apply from
+        # _resolve_imported_offsets was already saved, but this
+        # "scaled" correction, if chosen, hasn't been yet).
+        self._apply_now()
 
     def _on_realize_refresh_offsets(self, *_args):
         """Re-derive the relative-offset sliders now that this window's
@@ -854,9 +1136,44 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
             gfile = dialog.get_file()
             path = Path(gfile.get_path()) if gfile and gfile.get_path() else None
             if path:
+                # Raw offset_x/offset_y are baked-in pixel margins for
+                # *this* machine's monitor -- exporting them as-is is
+                # what breaks on a friend's different resolution. Swap
+                # them for the portable rel_offset_x/y (already tracked
+                # in self._rel_offset_x/y) plus the monitor_res they
+                # were computed against, so the importing machine can
+                # re-derive correct raw offsets for its own screen. The
+                # raw values are kept too, but only as comments -- see
+                # _insert_offset_comments.
+                crosshair_export = dict(self.cfg["crosshair"])
+                raw_x = crosshair_export.pop("offset_x", 0)
+                raw_y = crosshair_export.pop("offset_y", 0)
+                crosshair_export["rel_offset_x"] = int(round(self._rel_offset_x))
+                crosshair_export["rel_offset_y"] = int(round(self._rel_offset_y))
+                # A specific output/connector name (e.g. "DP-2") is tied
+                # to this machine's setup and almost never matches
+                # anyone else's -- worse, it'd silently pin the imported
+                # crosshair to whatever *that* connector happens to be
+                # on the importing machine, if it exists at all. Left
+                # out entirely (not even as a comment) rather than
+                # exported: anyone who wants it for their own personal
+                # reuse can add `output = "..."` back by hand.
+                crosshair_export.pop("output", None)
+
+                geo = self._get_monitor_geometry()
+                monitor_res = format_monitor_res(*geo) if geo else ""
+
                 bundle = {
-                    "crosshair": dict(self.cfg["crosshair"]),
+                    "crosshair": crosshair_export,
                     "daemon": dict(self.cfg["daemon"]),
+                    "import": {
+                        "monitor_res": monitor_res,
+                        # Deliberately left blank: this machine's own
+                        # raw/scaled preference wouldn't mean anything
+                        # on a different screen -- the importing side
+                        # decides for itself, via the prompt.
+                        "keep_rel_offset": "",
+                    },
                 }
                 image_path = self.cfg["crosshair"].get("image", "")
                 if image_path and Path(image_path).expanduser().exists():
@@ -865,11 +1182,36 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
                     except Exception as exc:  # noqa: BLE001
                         self._set_status_text(f"⚠ Could not embed image: {exc}")
                 try:
-                    path.write_text(dump_toml(bundle))
+                    text = self._insert_offset_comments(dump_toml(bundle), raw_x, raw_y, monitor_res)
+                    path.write_text(text)
                     self._set_status_text(f"Exported to {path.name}")
                 except Exception as exc:  # noqa: BLE001
                     self._set_status_text(f"⚠ Export failed: {exc}")
         dialog.destroy()
+
+    @staticmethod
+    def _insert_offset_comments(text: str, raw_x, raw_y, monitor_res: str) -> str:
+        """Splice commented-out raw offset_x/offset_y lines back into an
+        exported config, right above the rel_offset_x/y lines that
+        replace them as the live values.
+
+        These comments are never read back by anything -- tomllib
+        ignores comment lines entirely, and crosshaird.py only ever
+        looks up offset_x/offset_y as live keys -- they're kept purely
+        so someone running crosshaird directly off an exported file,
+        without ever going through crosshair-gui's Import button, can
+        still see (and manually uncomment/restore) the exact pixel
+        values the config was originally created with.
+        """
+        res_note = f" (on a {monitor_res} display)" if monitor_res else ""
+        out = []
+        for line in text.split("\n"):
+            if line.startswith("rel_offset_x = "):
+                out.append(f"#offset_x = {raw_x}  # original offset{res_note}, see rel_offset_x below")
+            elif line.startswith("rel_offset_y = "):
+                out.append(f"#offset_y = {raw_y}  # original offset{res_note}, see rel_offset_y below")
+            out.append(line)
+        return "\n".join(out)
 
     def _on_import_clicked(self, _btn):
         dialog = Gtk.FileChooserNative.new(
@@ -921,6 +1263,14 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         daemon_cfg = dict(DEFAULT_CONFIG["daemon"])
         daemon_cfg.update(bundle.get("daemon", {}))
         self.cfg["daemon"] = daemon_cfg
+
+        # Carries monitor_res/keep_rel_offset for _resolve_imported_offsets
+        # (run below, inside _populate_from_cfg) to act on. Old-style
+        # exports with no [import] section just merge in as all-blank,
+        # same effect as no rel_offset_x/y being present at all.
+        import_cfg = dict(DEFAULT_CONFIG["import"])
+        import_cfg.update(bundle.get("import", {}))
+        self.cfg["import"] = import_cfg
 
         _debug(f"import: id(new self.cfg['crosshair'])={id(self.cfg['crosshair'])} value={self.cfg['crosshair']}")
 

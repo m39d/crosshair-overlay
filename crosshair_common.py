@@ -51,6 +51,18 @@ DEFAULT_CONFIG = {
     "daemon": {
         "start_visible": True,
     },
+    # GUI-only bookkeeping for the export/import round trip -- crosshaird.py
+    # never reads this section (it only ever looks up cfg["crosshair"] and
+    # cfg["daemon"] keys), so nothing here can affect the running overlay.
+    # Included in DEFAULT_CONFIG (rather than left undocumented) so it's
+    # always visibly written out to config.toml, as a discoverable knob:
+    # setting keep_rel_offset by hand skips the resolution-mismatch prompt
+    # crosshair-gui shows when importing a config exported for a different
+    # monitor_res.
+    "import": {
+        "monitor_res": "",     # "WIDTHxHEIGHT" the offsets below were exported for; "" = n/a
+        "keep_rel_offset": "",  # "" (ask) | "raw" (keep exact pixels) | "scaled" (rescale to this monitor)
+    },
 }
 
 
@@ -75,6 +87,26 @@ def _toml_value(value) -> str:
     if isinstance(value, (int, float)):
         return str(value)
     return json.dumps(str(value))  # JSON string syntax is valid TOML basic-string syntax
+
+
+def parse_monitor_res(value: str):
+    """Parse a "WIDTHxHEIGHT" string (as stored in [import] monitor_res)
+    into an (int, int) tuple, or None if it's empty or malformed.
+
+    Deliberately lenient about malformed input (returns None rather than
+    raising) since this reads a value that may have been hand-edited.
+    """
+    if not value:
+        return None
+    try:
+        w_str, h_str = str(value).lower().split("x", 1)
+        return (int(w_str), int(h_str))
+    except (ValueError, AttributeError):
+        return None
+
+
+def format_monitor_res(width: int, height: int) -> str:
+    return f"{int(width)}x{int(height)}"
 
 
 def dump_toml(cfg: dict) -> str:

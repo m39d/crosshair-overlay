@@ -18,6 +18,7 @@ See README.md for dependency install / build / test instructions.
 """
 
 import argparse
+import ctypes.util
 import glob
 import os
 import signal
@@ -45,6 +46,13 @@ from crosshair_common import (
 # detect this case and re-exec ourselves once with it set, rather than
 # requiring it to be set by hand every launch (including under systemd/
 # autostart where that's awkward).
+#
+# These hardcoded paths only cover the common FHS/Debian/Arch layouts —
+# they miss non-x86_64 multiarch triplets and anything installed to a
+# fully custom prefix outside LD_LIBRARY_PATH. Kept only as a
+# last-resort fallback below; the linker-cache and LD_LIBRARY_PATH
+# lookups cover most other cases (including NixOS) without needing to
+# enumerate paths by hand.
 _LAYER_SHELL_LIB_CANDIDATES = [
     "/usr/lib/libgtk4-layer-shell.so*",
     "/usr/lib64/libgtk4-layer-shell.so*",
@@ -58,6 +66,35 @@ def _find_layer_shell_lib():
     override = os.environ.get("GTK4_LAYER_SHELL_PATH")
     if override and Path(override).exists():
         return override
+
+    # ctypes.util.find_library asks the platform's own dynamic linker
+    # (ldconfig's cache on Linux) where the library lives. This is
+    # distro- and architecture-agnostic -- it works the same on Fedora,
+    # Debian/arm64, Arch, etc. without us needing to know their layout.
+    found = ctypes.util.find_library("gtk4-layer-shell")
+    if found:
+        # On Linux this is typically a bare soname (e.g.
+        # "libgtk4-layer-shell.so.0") rather than an absolute path, since
+        # it's read out of ldconfig's cache rather than the filesystem.
+        # That's fine for LD_PRELOAD: the dynamic linker resolves it via
+        # the same cache/search path it used to report it here.
+        return found
+
+    # ldconfig's cache is a dead end on NixOS: packages live under
+    # hashed, unpredictable /nix/store/<hash>-.../lib paths and are
+    # deliberately never registered globally. What Nix *does* do instead
+    # is populate LD_LIBRARY_PATH with the relevant store paths whenever
+    # you're inside a nix-shell/flake devShell that depends on the
+    # package -- so search those directories too. This also incidentally
+    # covers anyone who's manually exported LD_LIBRARY_PATH to point at a
+    # from-source build.
+    for lib_dir in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep):
+        if not lib_dir:
+            continue
+        matches = sorted(glob.glob(os.path.join(lib_dir, "libgtk4-layer-shell.so*")))
+        if matches:
+            return matches[0]
+
     for pattern in _LAYER_SHELL_LIB_CANDIDATES:
         matches = sorted(glob.glob(pattern))
         if matches:
