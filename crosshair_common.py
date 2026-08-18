@@ -133,12 +133,25 @@ def save_config(cfg: dict, path: Path = DEFAULT_CONFIG_PATH) -> None:
 # --- color/rendering ---------------------------------------------------------
 
 def hex_to_rgba(hex_color: str, alpha: float):
+    """Parse a "#RRGGBB" string into a cairo-style (r, g, b, alpha) tuple.
+
+    Falls back to green on anything malformed -- wrong length *or*
+    non-hex characters (e.g. a hand-edited config.toml with "#GGGGGG")
+    -- rather than letting int(..., 16) raise ValueError out of what's
+    normally a GTK draw callback. Confirmed via a real config.toml with
+    an invalid color: pre-fix this crashed render_crosshair() with an
+    uncaught ValueError every time the preview/overlay redrew; post-fix
+    it just renders green, same as any other malformed color value.
+    """
     hex_color = (hex_color or "").lstrip("#")
     if len(hex_color) != 6:
         return (0.0, 1.0, 0.0, alpha)
-    r = int(hex_color[0:2], 16) / 255.0
-    g = int(hex_color[2:4], 16) / 255.0
-    b = int(hex_color[4:6], 16) / 255.0
+    try:
+        r = int(hex_color[0:2], 16) / 255.0
+        g = int(hex_color[2:4], 16) / 255.0
+        b = int(hex_color[4:6], 16) / 255.0
+    except ValueError:
+        return (0.0, 1.0, 0.0, alpha)
     return (r, g, b, alpha)
 
 
@@ -240,11 +253,44 @@ def encode_image_bundle(image_path: Path) -> dict:
 
 
 def decode_image_bundle(bundle: dict, dest_dir: Path = IMPORTED_IMAGES_DIR) -> Path:
+    """Decode an embedded-image bundle from an imported config.toml.
+
+    `filename` comes from a file the user imported -- possibly shared by
+    someone else -- so it's untrusted input, and prior to this function
+    a "../"-laden filename here looked like a path-traversal bug: naive
+    string-building (dest_dir / f"{digest}-{filename}") plus a Path
+    containing "/" characters, and Path.resolve() will happily collapse
+    those ".." segments right out of the intended imported-images/ dir.
+
+    In practice it wasn't exploitable, because dest_dir/f"{digest}-..."
+    glues the digest onto filename with no separating "/". That turns
+    the first path segment into something like "a1b2c3d4-.." -- a
+    literal, nonexistent directory name, not the special ".." parent
+    reference -- and write_bytes()'s underlying open() call has to
+    successfully descend into each real directory component before it
+    can act on a ".." after it. Since "a1b2c3d4-.." never exists on
+    disk, that descent fails with FileNotFoundError before any real
+    traversal occurs; confirmed empirically against this exact code
+    with several ".."-based payloads, none of which escaped dest_dir.
+
+    Sanitizing here anyway, as defense-in-depth rather than an active
+    fix: today's safety is an accident of *how* the digest and filename
+    happen to be concatenated, not something the code asserts on
+    purpose. A future change as small as adding a "/" separator for
+    readability, switching to os.path.join, or restructuring the digest
+    scheme would silently reintroduce a real traversal bug. Path(...)
+    .name strips any directory components regardless of how the rest of
+    this function evolves, and the containment check is a second,
+    independent guard against the same class of bug.
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    filename = bundle.get("filename") or "imported-crosshair.png"
+    raw_filename = bundle.get("filename") or "imported-crosshair.png"
+    filename = Path(raw_filename).name or "imported-crosshair.png"
     raw = base64.b64decode(bundle["data_base64"])
     digest = hashlib.sha256(raw).hexdigest()[:8]
-    dest = dest_dir / f"{digest}-{filename}"
+    dest = (dest_dir / f"{digest}-{filename}").resolve()
+    if dest_dir.resolve() not in dest.parents:
+        raise ValueError(f"invalid filename in imported bundle: {raw_filename!r}")
     if not dest.exists():
         dest.write_bytes(raw)
     return dest
