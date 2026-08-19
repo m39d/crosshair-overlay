@@ -18,7 +18,7 @@ Most of the crosshair overlays floating around for Linux are either
 X11 hacks that don't really work right under Wayland, or they work but leave
 you editing a TOML file by hand every time you want to nudge the size or
 change the color. This one has a proper settings window with a live preview,
-and it's been tested rather than just written and forgotten.
+and it's been tested on multiple setups to make sure it works.
 ## Features
 - Cross, dot, or circle shapes, or use your own custom image instead
 - Live-adjustable size, thickness, center gap, color, and opacity
@@ -93,6 +93,7 @@ output = ""           # blank = compositor default output
 offset_x = 0
 offset_y = 0
 # image = "~/.config/crosshair-overlay/crosshair.png"
+
 [daemon]
 start_visible = true
 
