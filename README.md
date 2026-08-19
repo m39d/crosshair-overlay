@@ -42,6 +42,11 @@ makepkg -si
 ### Anything else
 There's no distro-agnostic package yet (an AppImage may show up later). You'll
 need Python 3.11+, GTK4, `gtk4-layer-shell`, PyGObject, and pycairo installed.
+
+On Ubuntu 26.04 LTS or later:
+```bash
+sudo apt install python3 python3-gi python3-gi-cairo python3-cairo gir1.2-gtk-4.0 gir1.2-gtk4layershell-1.0 libgtk4-layer-shell0
+```
 Then:
 ```bash
 git clone https://github.com/m39d/crosshair-overlay.git
