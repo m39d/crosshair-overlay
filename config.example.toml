@@ -1,20 +1,23 @@
-# Copy this to ~/.config/crosshair-overlay/config.toml and edit.
-
 [crosshair]
-shape = "cross"      # "cross" | "dot" | "circle" — ignored if `image` is set below
-size = 24             # bounding box in px (also the scaled size of a custom image)
-thickness = 3         # line/stroke width in px (vector shapes only)
-gap = 4               # center gap for "cross" shape, in px (vector shapes only)
-color = "#9a00ff"     # hex RGB (vector shapes only; images use their own colors)
-opacity = 0.85        # 0.0 (invisible) - 1.0 (fully opaque); applies to shapes AND images
-output = ""           # output/connector name, e.g. "DP-1" (blank = default output;
-                       # list names with `kscreen-doctor -o` on KDE Plasma, or
-                       # `hyprctl monitors` on Hyprland)
-offset_x = 0          # px offset from screen center (0,0 = dead center)
+shape = "cross"      # cross | dot | circle - ignored if `image` is set
+size = 24
+thickness = 2
+gap = 4
+color = "#00FF00"
+opacity = 0.85
+output = ""           # blank = compositor default output
+offset_x = 0
 offset_y = 0
-# image = "~/.config/crosshair-overlay/crosshair.png"  # uncomment to use a
-                       # custom image instead of a vector shape. PNG with
-                       # transparency recommended. Scaled to `size` x `size`.
+# image = "~/.config/crosshair-overlay/crosshair.png"
 
 [daemon]
-start_visible = true  # if false, start hidden; toggle on with crosshairctl show
+start_visible = true
+
+[import]
+# Bookkeeping used only when resolving an imported config with a
+# different monitor_res than your screen. Safe to leave blank.
+monitor_res = ""       # e.g. "2560x1440", set automatically on export
+keep_rel_offset = ""   # If monitor_res differs from the screen's resolution,
+# "scaled" will convert the relative offset from center in your screen to a
+# value proportional to what it was on the old resolution, while "raw" will
+# keep the exact pixel values the same.
