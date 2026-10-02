@@ -46,3 +46,13 @@ Open an issue with:
 on the terminal to get more useful debug data.
 
 That's most of it, for now.
+
+## Regression tests
+
+With Python 3.11+, PyGObject, pycairo, GTK4 and Xvfb installed:
+
+```sh
+xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none /usr/bin/python3 -m unittest discover -s tests -v
+```
+
+These tests use temporary files and a virtual display. They do not start your overlay or change your real settings. The compositor-specific layer-shell behavior still needs a manual Wayland smoke test.
