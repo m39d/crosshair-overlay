@@ -54,3 +54,7 @@ The actual layer-shell overlay still needs a smoke test on KDE Wayland or Hyprla
 5. Check centered and nonzero offsets on the intended monitor, including after a size change.
 
 The existing Automatic-output geometry guess and raw-offset format remain unchanged. For reliable nonzero offsets across differently sized monitors, select the intended output explicitly.
+
+See [the native Wayland smoke-test checklist](wayland-smoke-test.md) for
+prerequisites, isolated launch commands, per-compositor results, and concrete
+pass criteria. Desktop results remain NOT RUN until recorded on a real session.
