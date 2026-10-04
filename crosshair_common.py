@@ -21,8 +21,10 @@ import hashlib
 import json
 import math
 import os
+import re
 import socket as _socket
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -44,7 +46,7 @@ DEFAULT_CONFIG = {
         "color": "#00FF00",
         "opacity": 0.85,
         "output": "",           # empty = compositor default output
-        "offset_x": 0,          # px from screen center; 0,0 = dead center
+        "offset_x": 0,          # raw top-left margin; 0,0 = auto-centered
         "offset_y": 0,
         "image": "",            # path to a custom crosshair image; overrides shape
     },
@@ -68,14 +70,48 @@ DEFAULT_CONFIG = {
 
 # --- config load/save -------------------------------------------------------
 
+def validate_config(user_cfg: dict) -> dict:
+    """Merge defaults and reject malformed values before changing live state."""
+    cfg = {section: dict(values) for section, values in DEFAULT_CONFIG.items()}
+    for section, values in user_cfg.items():
+        if not isinstance(values, dict):
+            raise ValueError(f"[{section}] must be a table")
+        if any(not isinstance(value, (str, int, float, bool)) for value in values.values()):
+            raise ValueError(f"[{section}] must contain simple values")
+        cfg.setdefault(section, {}).update(values)
+    for section, defaults in DEFAULT_CONFIG.items():
+        for key, default in defaults.items():
+            value = cfg[section][key]
+            if isinstance(default, float):
+                valid = type(value) in (int, float) and math.isfinite(value)
+            else:
+                valid = type(value) is type(default)
+            if not valid:
+                raise ValueError(f"{section}.{key} has an invalid type or value")
+    c = cfg["crosshair"]
+    for key, lower, upper in (("size", 4, 300), ("thickness", 1, 20),
+                              ("gap", 0, 60), ("opacity", 0, 1)):
+        if not lower <= c[key] <= upper:
+            raise ValueError(f"crosshair.{key} must be between {lower} and {upper}")
+    if c["shape"] not in ("cross", "dot", "circle"):
+        raise ValueError("crosshair.shape must be cross, dot, or circle")
+    color = c["color"].lstrip("#")
+    if len(color) != 6 or any(char not in "0123456789abcdefABCDEF" for char in color):
+        raise ValueError("crosshair.color must be a six-digit hex color")
+    c["color"] = "#" + color.upper()
+    for key in ("rel_offset_x", "rel_offset_y"):
+        if key in c and (type(c[key]) not in (int, float) or not math.isfinite(c[key])):
+            raise ValueError(f"crosshair.{key} must be a finite number")
+    return cfg
+
+
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> dict:
     cfg = {section: dict(values) for section, values in DEFAULT_CONFIG.items()}
     if path.exists():
         try:
             with open(path, "rb") as f:
                 user_cfg = tomllib.load(f)
-            for section, values in user_cfg.items():
-                cfg.setdefault(section, {}).update(values)
+            cfg = validate_config(user_cfg)
         except Exception as exc:  # noqa: BLE001 - keep running with defaults
             sys.stderr.write(f"Warning: failed to parse {path}: {exc}\n")
     return cfg
@@ -86,7 +122,8 @@ def _toml_value(value) -> str:
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return str(value)
-    return json.dumps(str(value))  # JSON string syntax is valid TOML basic-string syntax
+    # Literal Unicode avoids JSON surrogate-pair escapes, which TOML rejects.
+    return json.dumps(str(value), ensure_ascii=False)
 
 
 def parse_monitor_res(value: str):
@@ -100,7 +137,8 @@ def parse_monitor_res(value: str):
         return None
     try:
         w_str, h_str = str(value).lower().split("x", 1)
-        return (int(w_str), int(h_str))
+        width, height = int(w_str), int(h_str)
+        return (width, height) if width > 0 and height > 0 else None
     except (ValueError, AttributeError):
         return None
 
@@ -118,16 +156,33 @@ def dump_toml(cfg: dict) -> str:
     """
     lines = []
     for section, values in cfg.items():
-        lines.append(f"[{section}]")
+        lines.append(f"[{_toml_key(section)}]")
         for key, value in values.items():
-            lines.append(f"{key} = {_toml_value(value)}")
+            lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
         lines.append("")
     return "\n".join(lines)
 
 
+def _toml_key(key: str) -> str:
+    return key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else _toml_value(key)
+
+
 def save_config(cfg: dict, path: Path = DEFAULT_CONFIG_PATH) -> None:
+    """Replace atomically so a concurrent reload never sees a partial file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dump_toml(cfg))
+    text = dump_toml(cfg)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 # --- color/rendering ---------------------------------------------------------
@@ -192,7 +247,7 @@ def render_crosshair(ctx, width, height, crosshair_cfg: dict, pixbuf=None, clear
 
     shape = crosshair_cfg.get("shape", "cross")
     thickness = float(crosshair_cfg.get("thickness", 2))
-    gap = float(crosshair_cfg.get("gap", 4))
+    gap = min(float(crosshair_cfg.get("gap", 4)), min(width, height) / 2.0)
     color = hex_to_rgba(crosshair_cfg.get("color", "#00FF00"), opacity)
 
     ctx.set_source_rgba(*color)
@@ -286,7 +341,7 @@ def decode_image_bundle(bundle: dict, dest_dir: Path = IMPORTED_IMAGES_DIR) -> P
     dest_dir.mkdir(parents=True, exist_ok=True)
     raw_filename = bundle.get("filename") or "imported-crosshair.png"
     filename = Path(raw_filename).name or "imported-crosshair.png"
-    raw = base64.b64decode(bundle["data_base64"])
+    raw = base64.b64decode(bundle["data_base64"], validate=True)
     digest = hashlib.sha256(raw).hexdigest()[:8]
     dest = (dest_dir / f"{digest}-{filename}").resolve()
     if dest_dir.resolve() not in dest.parents:
@@ -297,6 +352,17 @@ def decode_image_bundle(bundle: dict, dest_dir: Path = IMPORTED_IMAGES_DIR) -> P
 
 
 # --- control socket -----------------------------------------------------------
+
+def daemon_is_running(socket_path: Path = DEFAULT_SOCKET_PATH) -> bool:
+    """Probe the listener without changing visibility or trusting a stale file."""
+    try:
+        with _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.2)
+            sock.connect(str(socket_path))
+        return True
+    except OSError:
+        return False
+
 
 def send_control_command(command: str, socket_path: Path = DEFAULT_SOCKET_PATH) -> bool:
     """Send a command to a running crosshaird over its Unix control socket.

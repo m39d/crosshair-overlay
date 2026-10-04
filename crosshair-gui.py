@@ -54,6 +54,7 @@ from crosshair_common import (  # noqa: E402
     DEFAULT_CONFIG,
     DEFAULT_CONFIG_PATH,
     DEFAULT_SOCKET_PATH,
+    daemon_is_running,
     decode_image_bundle,
     dump_toml,
     encode_image_bundle,
@@ -64,6 +65,7 @@ from crosshair_common import (  # noqa: E402
     render_crosshair,
     save_config,
     send_control_command,
+    validate_config,
 )
 
 APPLY_DEBOUNCE_MS = 150       # avoid flooding disk writes/socket calls while dragging a slider
@@ -108,6 +110,10 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
 
         self._loading = True         # suppress apply-on-change while we set initial widget state
         self._apply_source_id = None
+        self._start_source_id = None
+        self._status_refresh_source_id = None
+        self._starting_process = None
+        self._label_group = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
         self._current_mode = "cross"  # "cross" | "dot" | "circle" | "image"
         self._preview_pixbuf = None
         self._output_values = [""]
@@ -196,13 +202,14 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         self.connect("realize", self._on_realize_refresh_offsets)
 
         self._refresh_status()
-        if not self.socket_path.exists():
+        if not daemon_is_running(self.socket_path):
             # Quality-of-life: start the overlay automatically when you
             # open settings, rather than making "why isn't anything
             # showing" the first thing a new user has to debug. The
             # button remains available to stop/restart it explicitly.
             self._start_overlay()
-        GLib.timeout_add(STATUS_POLL_INTERVAL_MS, self._on_status_poll)
+        self._poll_source_id = GLib.timeout_add(STATUS_POLL_INTERVAL_MS, self._on_status_poll)
+        self.connect("close-request", self._on_close_request)
 
     # -- UI construction ------------------------------------------------
 
@@ -214,6 +221,8 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         self.preview_area.set_content_height(PREVIEW_BOX_SIZE)
         self.preview_area.add_css_class("preview-canvas")
         self.preview_area.set_draw_func(self._draw_preview, None)
+        self.preview_area.set_tooltip_text("Live crosshair preview (large crosshairs are scaled to fit)")
+        self.preview_area.update_property([Gtk.AccessibleProperty.LABEL], ["Live crosshair preview"])
         frame.set_child(self.preview_area)
 
         css = Gtk.CssProvider()
@@ -228,17 +237,11 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         box.set_halign(Gtk.Align.CENTER)
         box.append(frame)
-        caption = Gtk.Label(label="Preview")
-        caption.add_css_class("dim-label")
-        caption.set_wrap(True)
-        caption.set_justify(Gtk.Justification.CENTER)
-        box.append(caption)
         return box
 
     def _build_shape_picker(self):
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         row.set_homogeneous(True)
-        row.add_css_class("linked")
         row.set_halign(Gtk.Align.CENTER)
 
         self._shape_buttons = {}
@@ -259,14 +262,27 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         return row
 
     def _labeled_row(self, label_text, widget):
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        label = Gtk.Label(label=label_text)
-        label.set_halign(Gtk.Align.START)
-        label.set_size_request(90, -1)
-        row.append(label)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.append(self._control_label(label_text))
+        widget.update_property([Gtk.AccessibleProperty.LABEL], [label_text])
         widget.set_hexpand(True)
         row.append(widget)
         return row
+
+    def _control_label(self, text, subtitle=None):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_size_request(90, -1)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+        box.set_valign(Gtk.Align.CENTER)
+        box.append(Gtk.Label(label=text, xalign=0.5))
+        if subtitle:
+            sub = Gtk.Label(label=subtitle, xalign=0.5)
+            sub.add_css_class("caption")
+            sub.add_css_class("dim-label")
+            box.append(sub)
+        self._label_group.add_widget(box)
+        return box
 
     def _disable_scroll(self, widget):
         """Stop the mouse scroll wheel from changing `widget`'s value,
@@ -335,25 +351,13 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         spin = Gtk.SpinButton(adjustment=adjustment, digits=digits, climb_rate=step)
         spin.set_width_chars(6)
         self._disable_scroll(spin)
+        for control in (scale, spin):
+            control.update_property([Gtk.AccessibleProperty.LABEL], [label_text])
+            if subtitle:
+                control.set_tooltip_text(f"{label_text}: pixels from center; 0 is centered")
 
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        if subtitle:
-            label_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-            label_box.set_size_request(90, -1)
-            label = Gtk.Label(label=label_text)
-            label.set_halign(Gtk.Align.START)
-            label_box.append(label)
-            sub = Gtk.Label(label=subtitle)
-            sub.set_halign(Gtk.Align.START)
-            sub.add_css_class("caption")
-            sub.add_css_class("dim-label")
-            label_box.append(sub)
-            row.append(label_box)
-        else:
-            label = Gtk.Label(label=label_text)
-            label.set_halign(Gtk.Align.START)
-            label.set_size_request(90, -1)
-            row.append(label)
+        row.append(self._control_label(label_text, subtitle))
         row.append(scale)
         row.append(spin)
         return row, adjustment
@@ -422,6 +426,7 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         self.shape_only_box.append(row)
 
         row, self.gap_adj = self._build_adjustable_row("Center gap", 0, 60, 1, digits=0)
+        self.gap_row = row
         self._connect_signal(self.gap_adj, "value-changed", self._on_gap_changed)
         self.shape_only_box.append(row)
 
@@ -431,6 +436,8 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         self.applied_label = Gtk.Label(label="")
         self.applied_label.add_css_class("dim-label")
         self.applied_label.set_halign(Gtk.Align.START)
+        self.applied_label.set_xalign(0)
+        self.applied_label.set_wrap(True)
         return self.applied_label
 
     def _build_bottom_row(self):
@@ -549,6 +556,7 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
 
     def _update_sensitivity(self):
         self.shape_only_box.set_sensitive(self._current_mode != "image")
+        self.gap_row.set_sensitive(self._current_mode == "cross")
 
     # -- center-relative offset math ------------------------------------
     #
@@ -873,7 +881,11 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
     # -- change handlers --------------------------------------------------
 
     def _on_shape_toggled(self, btn, shape):
-        if self._loading or not btn.get_active():
+        if self._loading:
+            return
+        if not btn.get_active():
+            if self._current_mode == shape:
+                self._set_toggle_silently(shape, True)
             return
         for key, other in self._shape_buttons.items():
             if other is not btn:
@@ -886,8 +898,10 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         self._schedule_apply()
 
     def _on_image_toggled(self, btn):
-        if self._loading or not btn.get_active():
+        if self._loading:
             return
+        # Clicking the selected image is also how you replace it.
+        self._set_toggle_silently("image", self._current_mode == "image")
         dialog = Gtk.FileChooserNative.new(
             "Choose Crosshair Image", self, Gtk.FileChooserAction.OPEN, "_Open", "_Cancel"
         )
@@ -908,16 +922,17 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
             gfile = dialog.get_file()
             path = gfile.get_path() if gfile else None
             if path:
+                if load_pixbuf(path, self.cfg["crosshair"]["size"], warn=False) is None:
+                    self._set_status_text("⚠ Could not open that image; previous crosshair kept")
+                    dialog.destroy()
+                    return
                 for key, other in self._shape_buttons.items():
-                    if other is not btn:
-                        self._set_toggle_silently(key, False)
+                    self._set_toggle_silently(key, key == "image")
                 self.cfg["crosshair"]["image"] = path
                 self._current_mode = "image"
                 self._update_sensitivity()
                 self._refresh_preview()
                 self._schedule_apply()
-        else:
-            self._set_toggle_silently("image", False)
         dialog.destroy()
 
     def _on_size_changed(self, adjustment):
@@ -1012,13 +1027,17 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         self._apply_source_id = GLib.timeout_add(APPLY_DEBOUNCE_MS, self._apply_now)
 
     def _apply_now(self):
+        if self._apply_source_id is not None:
+            GLib.source_remove(self._apply_source_id)
         self._apply_source_id = None
+        self._last_save_succeeded = False
         _debug(f"_apply_now: saving self.cfg={self.cfg}")
         try:
             save_config(self.cfg, self.config_path)
         except Exception as exc:  # noqa: BLE001
             self._set_status_text(f"⚠ Could not save config: {exc}")
             return GLib.SOURCE_REMOVE
+        self._last_save_succeeded = True
         ok = send_control_command("reload", self.socket_path)
         if ok:
             self._set_status_text("● Applied")
@@ -1036,7 +1055,7 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         # the GUI (X button, Ctrl+C, etc) only ever affects this GUI
         # process, never the overlay daemon, which runs detached so it
         # doesn't vanish mid-game just because you closed settings.
-        running = self.socket_path.exists()
+        running = daemon_is_running(self.socket_path)
         if running:
             self.status_button.set_label("■ Stop Overlay")
             self.status_button.remove_css_class("suggested-action")
@@ -1045,14 +1064,14 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
             self.status_button.set_label("▶ Start Overlay")
             self.status_button.remove_css_class("destructive-action")
             self.status_button.add_css_class("suggested-action")
-        self.status_button.set_sensitive(True)
+        self.status_button.set_sensitive(self._starting_process is None)
 
     def _on_status_poll(self):
         self._refresh_status()
         return GLib.SOURCE_CONTINUE
 
     def _on_status_clicked(self, _btn):
-        if self.socket_path.exists():
+        if daemon_is_running(self.socket_path):
             self._stop_overlay()
         else:
             self._start_overlay()
@@ -1060,16 +1079,22 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
     def _stop_overlay(self):
         ok = send_control_command("quit", self.socket_path)
         self._set_status_text("Overlay stopped" if ok else "⚠ Could not stop overlay (already gone?)")
-        GLib.timeout_add(300, self._delayed_status_refresh)
+        if self._status_refresh_source_id is not None:
+            GLib.source_remove(self._status_refresh_source_id)
+        self._status_refresh_source_id = GLib.timeout_add(300, self._delayed_status_refresh)
 
     def _start_overlay(self):
+        if self._starting_process is not None:
+            return
         daemon_path = Path(__file__).resolve().parent / "crosshaird.py"
         if not daemon_path.exists():
             self._set_status_text("⚠ Could not find crosshaird.py next to this script")
             return
         try:
-            subprocess.Popen(
-                [sys.executable, str(daemon_path)],
+            save_config(self.cfg, self.config_path)
+            self._starting_process = subprocess.Popen(
+                [sys.executable, str(daemon_path), "--config", str(self.config_path),
+                 "--socket", str(self.socket_path)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
@@ -1078,16 +1103,37 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
             self._set_status_text(f"⚠ Could not start overlay: {exc}")
             return
         self._set_status_text("Starting…")
-        GLib.timeout_add(1200, self._after_start_check)
+        self.status_button.set_sensitive(False)
+        self._start_source_id = GLib.timeout_add(1200, self._after_start_check)
 
     def _delayed_status_refresh(self):
+        self._status_refresh_source_id = None
         self._refresh_status()
         return GLib.SOURCE_REMOVE
 
     def _after_start_check(self):
+        self._start_source_id = None
+        process = self._starting_process
+        self._starting_process = None
         self._refresh_status()
-        self._apply_now()
+        if daemon_is_running(self.socket_path):
+            self._set_status_text("Overlay running")
+        else:
+            code = process.poll() if process is not None else None
+            detail = f" (exit {code})" if code is not None else ""
+            self._set_status_text(f"⚠ Overlay did not start{detail}. Run crosshaird in a terminal for details.")
         return GLib.SOURCE_REMOVE
+
+    def _on_close_request(self, *_args):
+        # Flush the last debounced edit before GTK exits; leave the daemon alive.
+        if self._apply_source_id is not None:
+            self._apply_now()
+        for attr in ("_poll_source_id", "_start_source_id", "_status_refresh_source_id"):
+            source_id = getattr(self, attr)
+            if source_id is not None:
+                GLib.source_remove(source_id)
+                setattr(self, attr, None)
+        return False
 
     # -- preview -------------------------------------------------------
 
@@ -1112,10 +1158,12 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
 
         crosshair_cfg = self.cfg["crosshair"]
         size = max(4, int(crosshair_cfg.get("size", 24)))
-        ox = (width - size) / 2.0
-        oy = (height - size) / 2.0
+        factor = min(1.0, (width - 16) / size, (height - 16) / size)
+        ox = (width - size * factor) / 2.0
+        oy = (height - size * factor) / 2.0
         ctx.save()
         ctx.translate(ox, oy)
+        ctx.scale(factor, factor)
         render_crosshair(ctx, size, size, crosshair_cfg, self._preview_pixbuf, clear=False)
         ctx.restore()
 
@@ -1176,14 +1224,17 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
                     },
                 }
                 image_path = self.cfg["crosshair"].get("image", "")
-                if image_path and Path(image_path).expanduser().exists():
+                if image_path:
                     try:
                         bundle["image_data"] = encode_image_bundle(Path(image_path).expanduser())
+                        bundle["crosshair"]["image"] = ""
                     except Exception as exc:  # noqa: BLE001
                         self._set_status_text(f"⚠ Could not embed image: {exc}")
+                        dialog.destroy()
+                        return
                 try:
                     text = self._insert_offset_comments(dump_toml(bundle), raw_x, raw_y, monitor_res)
-                    path.write_text(text)
+                    path.write_text(text, encoding="utf-8")
                     self._set_status_text(f"Exported to {path.name}")
                 except Exception as exc:  # noqa: BLE001
                     self._set_status_text(f"⚠ Export failed: {exc}")
@@ -1245,34 +1296,21 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         _debug(f"import: parsed bundle keys={list(bundle.keys())}")
         _debug(f"import: bundle['crosshair']={bundle.get('crosshair')}")
 
-        crosshair = dict(DEFAULT_CONFIG["crosshair"])
-        crosshair.update(bundle.get("crosshair", {}))
-
-        image_data = bundle.get("image_data")
-        if image_data and "data_base64" in image_data:
-            try:
+        # Validate the whole candidate before replacing any live settings.
+        try:
+            candidate = validate_config(bundle)
+            crosshair = candidate["crosshair"]
+            image_data = candidate.pop("image_data", None)
+            if image_data is not None:
                 dest = decode_image_bundle(image_data)
                 crosshair["image"] = str(dest)
-            except Exception as exc:  # noqa: BLE001
-                self._set_status_text(f"⚠ Could not decode embedded image: {exc}")
+            if crosshair["image"] and load_pixbuf(crosshair["image"], crosshair["size"], warn=False) is None:
+                raise ValueError("custom image is missing or unreadable")
+        except Exception as exc:  # noqa: BLE001
+            self._set_status_text(f"⚠ Could not import {path.name}: {exc}")
+            return
 
-        _debug(f"import: merged crosshair dict to apply={crosshair}")
-        _debug(f"import: id(self.cfg)={id(self.cfg)} id(old crosshair dict)={id(self.cfg['crosshair'])}")
-
-        self.cfg["crosshair"] = crosshair
-        daemon_cfg = dict(DEFAULT_CONFIG["daemon"])
-        daemon_cfg.update(bundle.get("daemon", {}))
-        self.cfg["daemon"] = daemon_cfg
-
-        # Carries monitor_res/keep_rel_offset for _resolve_imported_offsets
-        # (run below, inside _populate_from_cfg) to act on. Old-style
-        # exports with no [import] section just merge in as all-blank,
-        # same effect as no rel_offset_x/y being present at all.
-        import_cfg = dict(DEFAULT_CONFIG["import"])
-        import_cfg.update(bundle.get("import", {}))
-        self.cfg["import"] = import_cfg
-
-        _debug(f"import: id(new self.cfg['crosshair'])={id(self.cfg['crosshair'])} value={self.cfg['crosshair']}")
+        self.cfg = candidate
 
         self._loading = True
         try:
@@ -1307,7 +1345,8 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
             self._apply_source_id = None
 
         self._apply_now()
-        self._set_status_text(f"Imported {path.name}")
+        if self._last_save_succeeded:
+            self._set_status_text(f"Imported {path.name}")
 
 
 class CrosshairGuiApp(Gtk.Application):

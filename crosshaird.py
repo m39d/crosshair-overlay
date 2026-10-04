@@ -156,6 +156,7 @@ except (ValueError, ImportError) as exc:
 
 
 class CrosshairWindow(Gtk.Window):
+    _css_provider = None
     _CSS = b"""
     window.crosshair-overlay-window {
         background-color: transparent;
@@ -247,11 +248,14 @@ class CrosshairWindow(Gtk.Window):
         display = Gdk.Display.get_default()
         if display is None:
             return
+        if CrosshairWindow._css_provider is not None:
+            return
         provider = Gtk.CssProvider()
         provider.load_from_data(self._CSS)
         Gtk.StyleContext.add_provider_for_display(
             display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+        CrosshairWindow._css_provider = provider
 
     def _load_image(self, cfg: dict):
         """Load+scale a custom crosshair image if `image` is set in config.
@@ -334,13 +338,17 @@ class ControlServer:
             except OSError:
                 break
             with conn:
-                data = conn.recv(64).decode("utf-8", "ignore").strip()
-                if data:
-                    GLib.idle_add(self.app.handle_command, data)
-                    try:
+                # An idle/disconnected client must not block all later commands.
+                conn.settimeout(0.5)
+                try:
+                    data = conn.recv(64).decode("utf-8", "ignore").strip().lower()
+                    if data in ("toggle", "show", "hide", "reload", "quit"):
+                        GLib.idle_add(self.app.handle_command, data)
                         conn.sendall(b"ok\n")
-                    except OSError:
-                        pass
+                    elif data:
+                        conn.sendall(b"error\n")
+                except OSError:
+                    pass
 
     def stop(self):
         self._running = False
