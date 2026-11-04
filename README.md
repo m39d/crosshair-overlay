@@ -62,6 +62,9 @@ cd crosshair-overlay
 mkdir -p ~/.local/bin
 cp *.py crosshair-overlay ~/.local/bin/
 chmod +x ~/.local/bin/crosshaird.py ~/.local/bin/crosshair-gui.py ~/.local/bin/crosshairctl.py ~/.local/bin/crosshair-overlay
+for command in crosshaird crosshair-gui crosshairctl; do
+    ln -sf "$command.py" "$HOME/.local/bin/$command"
+done
 ```
 Make sure `~/.local/bin` is on your `PATH`, then run `crosshair-overlay`
 (or `crosshair-gui.py` directly, if you prefer).
