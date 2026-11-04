@@ -52,6 +52,28 @@ class ConfigTests(unittest.TestCase):
             path.write_text('[crosshair]\nsize = 80\nopacity = "bad"\n')
             self.assertEqual(common.load_config(path), common.DEFAULT_CONFIG)
 
+    def test_strict_load_preserves_invalid_config_for_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'config.toml'
+            original = b'[crosshair]\nsize=301\ncolor="#FF0000"\n'
+            path.write_bytes(original)
+            with self.assertRaises(ValueError):
+                common.load_config(path, strict=True)
+            backup = common.backup_config(path)
+            common.save_config(common.DEFAULT_CONFIG, path)
+            self.assertEqual(backup.read_bytes(), original)
+            self.assertEqual(common.load_config(path), common.DEFAULT_CONFIG)
+
+    def test_failed_backup_does_not_leave_partial_recovery_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'config.toml'
+            path.write_bytes(b'original config')
+            with patch.object(common.shutil, 'copyfileobj', side_effect=OSError('disk full')):
+                with self.assertRaises(OSError):
+                    common.backup_config(path)
+            self.assertEqual(path.read_bytes(), b'original config')
+            self.assertEqual(list(Path(tmp).iterdir()), [path])
+
     def test_embedded_image_validation_and_containment(self):
         with tempfile.TemporaryDirectory() as tmp:
             dest = common.decode_image_bundle({'filename': '../../cross.png',

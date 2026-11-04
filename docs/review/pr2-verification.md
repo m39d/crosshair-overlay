@@ -50,3 +50,15 @@ Keep PR #2 draft until real desktop observations satisfy the gate. The
 unchanged Automatic-output geometry guess is documented separately from the
 explicit-output placement checks. No native desktop pass, merge, release or
 AUR publication is established by this record.
+
+## Follow-up — 2026-11-03
+
+The maintainer authorized merging before a short real-device check, with release
+and package publication deferred until that check passes. The follow-up preserves
+invalid configs before fallback saves, fixes manual-install command names, and
+includes goose21511's repeated-activation fix with its original authorship.
+
+The expanded suite attempts 34 tests locally: 19 pass and 15 encounter environment
+errors (four require Unix sockets; eleven require a graphical display). Python
+compilation and whitespace checks pass. A fresh GitHub Actions run is required
+before merging; no native desktop result is claimed here.

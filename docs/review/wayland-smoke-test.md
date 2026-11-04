@@ -7,7 +7,9 @@ Every desktop result is **NOT RUN** until a tester records observations.
 
 ## Scope and prerequisites
 
-The original merge gate asks for **KDE Plasma/KWin Wayland or Hyprland**.
+The original merge gate asked for **KDE Plasma/KWin Wayland or Hyprland**.
+The maintainer now authorizes merging first, followed by a short device check
+before release; the expanded checklist below remains optional additional coverage.
 One actual target session satisfies that wording; test both to substantiate
 both supported compositor configurations. Record the compositor/version,
 distro, GTK version, theme, game/version and whether the game uses native

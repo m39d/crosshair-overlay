@@ -22,6 +22,7 @@ import json
 import math
 import os
 import re
+import shutil
 import socket as _socket
 import sys
 import tempfile
@@ -105,7 +106,7 @@ def validate_config(user_cfg: dict) -> dict:
     return cfg
 
 
-def load_config(path: Path = DEFAULT_CONFIG_PATH) -> dict:
+def load_config(path: Path = DEFAULT_CONFIG_PATH, *, strict: bool = False) -> dict:
     cfg = {section: dict(values) for section, values in DEFAULT_CONFIG.items()}
     if path.exists():
         try:
@@ -113,8 +114,29 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> dict:
                 user_cfg = tomllib.load(f)
             cfg = validate_config(user_cfg)
         except Exception as exc:  # noqa: BLE001 - keep running with defaults
+            if strict:
+                raise
             sys.stderr.write(f"Warning: failed to parse {path}: {exc}\n")
     return cfg
+
+
+def backup_config(path: Path) -> Path:
+    """Preserve an unreadable config before the GUI saves fallback defaults."""
+    backup = None
+    try:
+        with path.open("rb") as source, tempfile.NamedTemporaryFile(
+            mode="wb", dir=path.parent, prefix=f"{path.name}.invalid-",
+            suffix=".bak", delete=False,
+        ) as destination:
+            backup = Path(destination.name)
+            shutil.copyfileobj(source, destination)
+            destination.flush()
+            os.fsync(destination.fileno())
+        return backup
+    except Exception:
+        if backup is not None:
+            backup.unlink(missing_ok=True)
+        raise
 
 
 def _toml_value(value) -> str:

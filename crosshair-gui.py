@@ -54,6 +54,7 @@ from crosshair_common import (  # noqa: E402
     DEFAULT_CONFIG,
     DEFAULT_CONFIG_PATH,
     DEFAULT_SOCKET_PATH,
+    backup_config,
     daemon_is_running,
     decode_image_bundle,
     dump_toml,
@@ -142,7 +143,19 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         # expect.
         self._signal_handlers = {}
 
-        self.cfg = load_config(config_path)
+        self._config_warning = ""
+        try:
+            self.cfg = load_config(config_path, strict=True)
+        except Exception as exc:  # noqa: BLE001
+            # A failed backup aborts startup before anything can overwrite
+            # the original. Keep the recovery location visible this session.
+            try:
+                backup = backup_config(config_path)
+            except Exception:
+                self.destroy()
+                raise
+            self.cfg = {section: dict(values) for section, values in DEFAULT_CONFIG.items()}
+            self._config_warning = f"Invalid config ({exc}). Original saved to {backup}; using defaults."
 
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         root.set_margin_top(12)
@@ -210,6 +223,8 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
             self._start_overlay()
         self._poll_source_id = GLib.timeout_add(STATUS_POLL_INTERVAL_MS, self._on_status_poll)
         self.connect("close-request", self._on_close_request)
+        if self._config_warning and not self.applied_label.get_label():
+            self._set_status_text("")
 
     # -- UI construction ------------------------------------------------
 
@@ -1047,7 +1062,8 @@ class CrosshairSettingsWindow(Gtk.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def _set_status_text(self, text):
-        self.applied_label.set_label(text)
+        warning = getattr(self, "_config_warning", "")
+        self.applied_label.set_label(f"{warning}\n{text}" if warning else text)
 
     def _refresh_status(self):
         # This button controls the daemon's lifecycle explicitly, on

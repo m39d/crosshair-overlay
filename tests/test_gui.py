@@ -100,6 +100,34 @@ class GuiTests(unittest.TestCase):
             self.window._start_overlay()
             popen.assert_called_once()
 
+    def test_invalid_config_is_backed_up_before_automatic_start(self):
+        path = Path(self.tmp.name) / 'invalid.toml'
+        original = b'[crosshair]\nsize=301\ncolor="#FF0000"\n'
+        path.write_bytes(original)
+        with patch.object(gui.subprocess, 'Popen'):
+            window = gui.CrosshairSettingsWindow(self.app, path, self.socket)
+        try:
+            backups = list(path.parent.glob('invalid.toml.invalid-*.bak'))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_bytes(), original)
+            self.assertEqual(gui.load_config(path), gui.DEFAULT_CONFIG)
+            window._set_status_text('Overlay running')
+            self.assertIn(str(backups[0]), window.applied_label.get_label())
+        finally:
+            window._on_close_request()
+            window.destroy()
+
+    def test_failed_config_backup_prevents_daemon_start_and_overwrite(self):
+        path = Path(self.tmp.name) / 'invalid.toml'
+        original = b'[crosshair]\nsize=301\n'
+        path.write_bytes(original)
+        with patch.object(gui, 'backup_config', side_effect=OSError('disk full')), \
+                patch.object(gui.subprocess, 'Popen') as launch:
+            with self.assertRaises(OSError):
+                gui.CrosshairSettingsWindow(self.app, path, self.socket)
+        launch.assert_not_called()
+        self.assertEqual(path.read_bytes(), original)
+
     def test_failed_image_export_does_not_create_incomplete_bundle(self):
         self.window.cfg['crosshair']['image'] = '/missing/image.png'
         dest = Path(self.tmp.name) / 'export.toml'

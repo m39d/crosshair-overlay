@@ -19,6 +19,9 @@ Screenshots are from the actual GTK window under Adwaita Dark on a virtual X11 d
 
 ## Behavior fixes
 
+- Preserve invalid on-disk configs in a unique `.bak` file before saving defaults, and keep a recovery warning visible in settings.
+- Retain the running overlay on repeated daemon activation (contributed by goose21511).
+- Make manual installation provide the CLI command names used in the README.
 - Flush a pending slider edit when closing the settings window and remove window-owned timers.
 - Save current settings before starting the daemon, forward custom `--config` / `--socket`, prevent repeated Start clicks during startup, and report a failed start.
 - Probe the socket listener instead of treating a leftover socket file as a running overlay.
@@ -33,7 +36,7 @@ Config validation now enforces the existing GUI ranges: size 4–300, thickness 
 
 ## Validation
 
-19 regression tests pass, using real GTK widgets, Cairo rendering, temporary config files, portable image bundles, and Unix sockets. The socket-server test isolates the server class without running the daemon's Wayland startup/re-exec. Python compilation and `git diff --check` pass. The settings window was visually inspected at normal and reduced height.
+The regression suite uses real GTK widgets, Cairo rendering, temporary config files, portable image bundles, and Unix sockets. Socket-server and daemon lifecycle tests isolate the real class definitions without running Wayland startup/re-exec. The original settings polish was visually inspected at normal and reduced height. Current automated results are recorded on the pull request.
 
 Run the same tests on a Linux machine with Python 3.11+, PyGObject, pycairo, GTK4, and Xvfb:
 
@@ -43,9 +46,9 @@ xvfb-run -a env GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none /usr/bin/python
 
 The GitHub Actions workflow runs this suite for pushes and pull requests.
 
-## Before merging
+## Before releasing
 
-The actual layer-shell overlay still needs a smoke test on KDE Wayland or Hyprland; the virtual display cannot establish fullscreen stacking, focus/click-through behavior, or multi-monitor placement.
+The maintainer approved merging before a short device check. Before publishing a release, the actual layer-shell overlay still needs a smoke test on KDE Wayland or Hyprland; the virtual display cannot establish fullscreen stacking, focus/click-through behavior, or multi-monitor placement.
 
 1. Stop the installed overlay, then run `python3 crosshair-gui.py` from this checkout.
 2. Check label spacing in your desktop theme, change each shape, replace/cancel a custom image, and export/import it.

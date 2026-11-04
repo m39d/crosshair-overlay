@@ -398,6 +398,11 @@ class CrosshairApp(Gtk.Application):
         self.visible = True
 
     def do_activate(self):
+        # GTK forwards subsequent launches to this instance. Leave its window
+        # and visibility alone instead of mistaking our own socket for a rival.
+        if self.window is not None:
+            return
+
         display = Gdk.Display.get_default()
         backend = type(display).__name__ if display else "none"
         if "Wayland" not in backend:
