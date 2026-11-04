@@ -1,10 +1,18 @@
 # crosshair-overlay
-A crosshair overlay for Wayland that actually works properly: it's a real
+A crosshair overlay for Wayland with a settings GUI. It uses a real
 layer-shell surface, it's click-through,
 it never steals keyboard focus, and it comes with a GUI so you don't have to
 hand-edit a config file to change the color or size.
 Built and tested on KDE Plasma (Wayland) and Hyprland. Should work on any
 compositor that supports `wlr-layer-shell`.
+
+## Acknowledgments
+
+This project was inspired by [wlcrosshair](https://github.com/marzeq/wlcrosshair)
+by [marzeq](https://github.com/marzeq), particularly its daemon/control-client
+architecture, CLI commands, and approach to a Wayland crosshair overlay.
+Thank you for creating and sharing the project that provided the starting
+point for this one.
 
 <p>
   <img src="crosshair-overlay.png" alt="Settings GUI" width="400">
@@ -14,10 +22,10 @@ compositor that supports `wlr-layer-shell`.
 </p>
 
 ## Why this exists
-Most of the crosshair overlays floating around for Linux are either
-X11 hacks that don't really work right under Wayland, or they work but leave
-you editing a TOML file by hand every time you want to nudge the size or
-change the color. This one has a proper settings window with a live preview,
+When I was looking for a crosshair overlay for Linux, I ran into X11 hacks
+that didn't work right under Wayland. I wanted a native Wayland overlay
+with a GUI that made adjusting the crosshair easy.
+This one has a proper settings window with a live preview,
 and it's been tested on multiple setups to make sure it works.
 ## Features
 - Cross, dot, or circle shapes, or use your own custom image instead
